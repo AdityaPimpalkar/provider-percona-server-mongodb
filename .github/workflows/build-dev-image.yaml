@@ -21,7 +21,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Native runners — no QEMU emulation needed, full hardware speed.
           - platform: linux/amd64
             runner: ubuntu-latest
           - platform: linux/arm64
@@ -52,9 +51,6 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
 
-      # Build for this platform only and push by digest (no tag yet).
-      # Per-platform cache keys ensure each native runner only fetches its
-      # own layer cache, keeping cache sizes small and hits high.
       - name: Build and push by digest
         id: build
         uses: docker/build-push-action@v6
@@ -64,8 +60,6 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           outputs: type=image,push-by-digest=true,name-canonical=true,push=true
-          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache-${{ env.PLATFORM_PAIR }}
-          cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache-${{ env.PLATFORM_PAIR }},mode=max
 
       - name: Export digest
         run: |
@@ -105,9 +99,6 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Tags applied at merge time:
-      #   - ghcr.io/<owner>/provider-percona-server-mongodb-dev:latest  (on main)
-      #   - ghcr.io/<owner>/provider-percona-server-mongodb-dev:sha-<short>
       - name: Extract image metadata
         id: meta
         uses: docker/metadata-action@v5
