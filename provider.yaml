@@ -1,7 +1,7 @@
 # Provider CR generated from Go code
 # Do not edit manually - regenerate using: provider-sdk generate-manifest
 ---
-apiVersion: openverest.io/v1alpha1 #FIXME: update to correct name
+apiVersion: core.openeverest.io/v1alpha1
 kind: Provider
 metadata:
   name: percona-server-mongodb-operator
@@ -58,4 +58,3 @@ spec:
         monitoring:
           optional: true
         proxy: {}
-status: {}
