@@ -1,0 +1,252 @@
+/*
+Copyright 2026.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package provider
+
+import (
+	"fmt"
+
+	psmdbv1 "github.com/percona/percona-server-mongodb-operator/pkg/apis/psmdb/v1"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/intstr"
+	"sigs.k8s.io/controller-runtime/pkg/log"
+
+	"github.com/openeverest/openeverest/v2/provider-runtime/controller"
+
+	"github.com/openeverest/provider-percona-server-mongodb/internal/common"
+	"github.com/openeverest/provider-percona-server-mongodb/types"
+)
+
+const (
+	psmdbDefaultConfigurationTemplate = `
+      operationProfiling:
+        mode: slowOp
+`
+	defaultBackupStartingTimeout = 120
+)
+
+var maxUnavailable = intstr.FromInt(1)
+
+// defaultSpec returns the default PerconaServerMongoDBSpec for new instances.
+func defaultSpec() psmdbv1.PerconaServerMongoDBSpec {
+	return psmdbv1.PerconaServerMongoDBSpec{
+		UpdateStrategy: psmdbv1.SmartUpdateStatefulSetStrategyType,
+		UpgradeOptions: psmdbv1.UpgradeOptions{
+			Apply:    "disabled",
+			Schedule: "0 4 * * *",
+			SetFCV:   true,
+		},
+		PMM: psmdbv1.PMMSpec{},
+		Replsets: []*psmdbv1.ReplsetSpec{
+			{
+				Name:          "rs0",
+				Configuration: psmdbv1.MongoConfiguration(psmdbDefaultConfigurationTemplate),
+				MultiAZ: psmdbv1.MultiAZ{
+					PodDisruptionBudget: &psmdbv1.PodDisruptionBudgetSpec{
+						MaxUnavailable: &maxUnavailable,
+					},
+					Resources: corev1.ResourceRequirements{
+						Limits: corev1.ResourceList{},
+					},
+				},
+				Size: 3,
+				VolumeSpec: &psmdbv1.VolumeSpec{
+					PersistentVolumeClaim: psmdbv1.PVCSpec{
+						PersistentVolumeClaimSpec: &corev1.PersistentVolumeClaimSpec{
+							Resources: corev1.VolumeResourceRequirements{
+								Requests: corev1.ResourceList{
+									// TODO: set storage size
+									corev1.ResourceStorage: resource.MustParse("10Gi"),
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		Sharding: psmdbv1.Sharding{
+			Enabled: false,
+		},
+		VolumeExpansionEnabled: true,
+		// FIXME
+		CRVersion: "1.21.1",
+	}
+}
+
+// ValidatePSMDB validates the Instance spec for PSMDB.
+func ValidatePSMDB(c *controller.Context) error {
+	l := log.FromContext(c.Context())
+	l.Info("Validating PSMDB cluster", "cluster", c.Name())
+
+	// TODO: Add actual validation logic
+	// Example: Check for required components, validate storage sizes, etc.
+	return nil
+}
+
+// SyncPSMDB creates or updates the PerconaServerMongoDB resource based on the Instance spec.
+func SyncPSMDB(c *controller.Context) error {
+	l := log.FromContext(c.Context())
+	l.Info("Syncing PSMDB cluster", "cluster", c.Name())
+
+	psmdb := &psmdbv1.PerconaServerMongoDB{
+		ObjectMeta: c.ObjectMeta(c.Name()),
+		Spec:       defaultSpec(),
+	}
+
+	// Get the engine component spec
+	engine := c.Instance().Spec.Components[common.ComponentEngine]
+	// No need to check if engine is nil, it is guaranteed to be present by the validator
+
+	// Set the image: use the user-specified image if provided, otherwise use the default from metadata
+	if engine.Image != "" {
+		// User explicitly specified an image
+		psmdb.Spec.Image = engine.Image
+	} else if metadata := c.Metadata(); metadata != nil {
+		// Look up the default image for the component type from the registered metadata
+		psmdb.Spec.Image = metadata.GetDefaultImage("mongod")
+	} else {
+		// Fallback: metadata not available, use PSMDBMetadata() directly
+		// This can happen in tests or when using NewContext instead of NewContextWithMetadata
+		psmdb.Spec.Image = common.PSMDBMetadata().GetDefaultImage(engine.Type)
+	}
+	psmdb.Spec.ImagePullPolicy = corev1.PullIfNotPresent
+
+	psmdb.Spec.Replsets = configureReplsets(c)
+	if c.Instance().Spec.Topology != nil && c.Instance().Spec.Topology.Type == "sharded" {
+		psmdb.Spec.Sharding.Enabled = true
+		psmdb.Spec.Sharding.ConfigsvrReplSet = configureConfigServerReplset(c)
+		psmdb.Spec.Sharding.Mongos = configureMongos(c)
+	}
+
+	psmdb.Spec.Backup = configureBackup(c)
+
+	psmdb.Spec.Secrets = &psmdbv1.SecretsSpec{
+		Users:         "everest-secrets-" + c.Name(),
+		EncryptionKey: c.Name() + "-mongodb-encryption-key",
+		SSLInternal:   c.Name() + "-ssl-internal",
+	}
+
+	if err := c.Apply(psmdb); err != nil {
+		return err
+	}
+	fmt.Println("PSMDB cluster synced:", c.Name())
+	return nil
+}
+
+// StatusPSMDB computes the current status of the PSMDB cluster.
+func StatusPSMDB(c *controller.Context) (controller.Status, error) {
+	// TODO: We probably shouldn't be querying the PSMDB object directly here;
+	// It can lead to a race condition where we are setting the status based on
+	// new data whereas the sync used older data.
+	// Should the SDK be responsible for fetching and caching the PSMDB object
+	// to ensure we only get it once during the reconcile?
+	psmdb := &psmdbv1.PerconaServerMongoDB{}
+	if err := c.Get(psmdb, c.Name()); err != nil {
+		return controller.Creating("Waiting for PerconaServerMongoDB"), nil
+	}
+	switch psmdb.Status.State {
+	case psmdbv1.AppStateReady:
+		return controller.Running(), nil
+	case psmdbv1.AppStateError:
+		return controller.Failed(psmdb.Status.Message), nil
+	default:
+		return controller.Creating("Cluster is being created"), nil
+	}
+}
+
+// CleanupPSMDB handles deletion of the PSMDB cluster.
+func CleanupPSMDB(c *controller.Context) error {
+	l := log.FromContext(c.Context())
+	l.Info("Cleaning up PSMDB cluster", "cluster", c.Name())
+
+	// TODO: Implemenent handling of finalizers
+	psmdb := &psmdbv1.PerconaServerMongoDB{
+		ObjectMeta: c.ObjectMeta(c.Name()),
+	}
+	if err := c.Delete(psmdb); err != nil {
+		return err
+	}
+
+	l.Info("PSMDB cluster cleaned up", "cluster", c.Name())
+
+	return nil
+}
+
+// PSMDBProvider implements the sdk.ProviderInterface interface.
+type PSMDBProvider struct {
+	controller.BaseProvider
+}
+
+// NewPSMDBProviderInterface creates a new PSMDB provider.
+func NewPSMDBProviderInterface() *PSMDBProvider {
+	return &PSMDBProvider{
+		BaseProvider: controller.BaseProvider{
+			ProviderName: "psmdb",
+			SchemeFuncs: []func(*runtime.Scheme) error{
+				psmdbv1.SchemeBuilder.AddToScheme,
+			},
+			Metadata: common.PSMDBMetadata(),
+		},
+	}
+}
+
+// Validate validates the Instance spec.
+func (p *PSMDBProvider) Validate(c *controller.Context) error {
+	return ValidatePSMDB(c)
+}
+
+// Sync ensures all resources exist and are configured correctly.
+func (p *PSMDBProvider) Sync(c *controller.Context) error {
+	return SyncPSMDB(c)
+}
+
+// Status computes the current status of the cluster.
+func (p *PSMDBProvider) Status(c *controller.Context) (controller.Status, error) {
+	return StatusPSMDB(c)
+}
+
+// Cleanup handles deletion of the cluster and any necessary cleanup.
+func (p *PSMDBProvider) Cleanup(c *controller.Context) error {
+	return CleanupPSMDB(c)
+}
+
+// ComponentSchemas returns the custom spec types for each component.
+func (p *PSMDBProvider) ComponentSchemas() map[string]interface{} {
+	return map[string]interface{}{
+		common.ComponentEngine:       &types.MongodCustomSpec{},
+		common.ComponentConfigServer: &types.MongodCustomSpec{},
+		common.ComponentProxy:        &types.MongosCustomSpec{},
+		common.ComponentBackupAgent:  &types.BackupCustomSpec{},
+		common.ComponentMonitoring:   &types.PMMCustomSpec{},
+	}
+}
+
+// Topologies returns the supported deployment topologies and their configuration schemas.
+func (p *PSMDBProvider) Topologies() map[string]controller.TopologyDefinition {
+	return common.PSMDBTopologyDefinitions()
+}
+
+// GlobalSchema returns the provider-level global configuration schema.
+func (p *PSMDBProvider) GlobalSchema() interface{} {
+	return &types.GlobalConfig{}
+}
+
+// Compile-time interface checks
+var _ controller.ProviderInterface = (*PSMDBProvider)(nil)
+var _ controller.MetadataProvider = (*PSMDBProvider)(nil)
+var _ controller.SchemaProvider = (*PSMDBProvider)(nil)
