@@ -1,8 +1,8 @@
-apiVersion: openverest.io/v1alpha1 #FIXME: update to correct name
+apiVersion: core.openeverest.io/v1alpha1
 kind: Instance
 metadata:
   name: psmdb-cluster
-  namespace: everest
+  namespace: default
 spec:
   # Provider identifier
   provider: psmdb
@@ -30,8 +30,12 @@ spec:
         size: 10Gi
         storageClass: standard
       resources:
-        cpu: 2
-        memory: 4Gi
+        requests:
+          cpu: 2
+          memory: 4Gi
+        limits:
+          cpu: 2
+          memory: 4Gi
 
     # Proxy/router (required for sharded topology)
     proxy:
