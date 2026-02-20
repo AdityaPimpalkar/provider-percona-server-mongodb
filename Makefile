@@ -45,14 +45,14 @@ $(OPENAPI_GEN): $(LOCALBIN)
 	GOBIN=$(LOCALBIN) go install k8s.io/kube-openapi/cmd/openapi-gen@$(OPENAPI_GEN_VERSION)
 
 .PHONY: install
-install: ## TODO: handle CRDs locally, gitsubmodules?
-	kubectl apply -f provider.yaml
+install: ## TODO: handle CRDs locally, gitsubmodules? FIXME: update to correct CRD URLs
 	kubectl apply -f https://raw.githubusercontent.com/openeverest/openeverest/v2/config/crd/bases/openverest.io_providers.yaml
 	kubectl apply -f https://raw.githubusercontent.com/openeverest/openeverest/v2/config/crd/bases/openverest.io_instances.yaml
 	kubectl apply --server-side -f https://raw.githubusercontent.com/percona/percona-server-mongodb-operator/v1.21.1/deploy/bundle.yaml
+	kubectl apply -f provider.yaml
 
 .PHONY: uninstall
-uninstall:  ## TODO: handle CRDs locally, gitsubmodules?
+uninstall:  ## TODO: handle CRDs locally, gitsubmodules? FIXME: update to correct CRD URLs
 	kubectl delete -f provider.yaml
 	kubectl delete -f https://raw.githubusercontent.com/openeverest/openeverest/v2/config/crd/bases/openverest.io_providers.yaml
 	kubectl delete -f https://raw.githubusercontent.com/openeverest/openeverest/v2/config/crd/bases/openverest.io_instances.yaml

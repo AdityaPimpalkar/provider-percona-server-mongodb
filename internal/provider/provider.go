@@ -188,6 +188,8 @@ func CleanupPSMDB(c *controller.Context) error {
 }
 
 // PSMDBProvider implements the sdk.ProviderInterface interface.
+//
+// TODO: configure watch provider.
 type PSMDBProvider struct {
 	controller.BaseProvider
 }

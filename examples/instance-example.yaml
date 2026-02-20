@@ -1,4 +1,4 @@
-apiVersion: everest.percona.com/v2alpha1
+apiVersion: openverest.io/v1alpha1 #FIXME: update to correct name
 kind: Instance
 metadata:
   name: psmdb-cluster
