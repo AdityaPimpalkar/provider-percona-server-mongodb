@@ -21,7 +21,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 
-	"github.com/openeverest/openeverest/v2/api/v1alpha1"
+	corev1alpha1 "github.com/openeverest/openeverest/v2/api/core/v1alpha1"
 	"github.com/openeverest/openeverest/v2/provider-runtime/controller"
 
 	"github.com/openeverest/provider-percona-server-mongodb/internal/common"
@@ -29,7 +29,7 @@ import (
 )
 
 // configureReplset configures a single replset based on the provided parameters.
-func configureReplset(name string, replicas *int32, resources *corev1.ResourceRequirements, storageSize *v1alpha1.Storage, expose bool) *psmdbv1.ReplsetSpec {
+func configureReplset(name string, replicas *int32, resources *corev1.ResourceRequirements, storageSize *corev1alpha1.Storage, expose bool) *psmdbv1.ReplsetSpec {
 	rsSpec := &psmdbv1.ReplsetSpec{
 		Name:          name,
 		Configuration: psmdbv1.MongoConfiguration(psmdbDefaultConfigurationTemplate),
