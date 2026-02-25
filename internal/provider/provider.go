@@ -194,7 +194,7 @@ type PSMDBProvider struct {
 func NewPSMDBProviderInterface() *PSMDBProvider {
 	return &PSMDBProvider{
 		BaseProvider: controller.BaseProvider{
-			ProviderName: "percona-server-mongodb-operator",
+			ProviderName: "percona-server-mongodb",
 			SchemeFuncs: []func(*runtime.Scheme) error{
 				psmdbv1.SchemeBuilder.AddToScheme,
 			},

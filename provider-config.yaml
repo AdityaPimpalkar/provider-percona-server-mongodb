@@ -1,8 +1,8 @@
-# Provider configuration for percona-server-mongodb-operator
+# Provider configuration for percona-server-mongodb
 # This file defines versions, component mappings, topology structure, and UI schema.
 # Run `go generate ./...` to produce provider.yaml from this config + Go types.
 
-name: percona-server-mongodb-operator
+name: percona-server-mongodb
 
 componentTypes:
   mongod:

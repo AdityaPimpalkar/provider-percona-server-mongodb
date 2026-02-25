@@ -4,7 +4,7 @@
 apiVersion: core.openeverest.io/v1alpha1
 kind: Provider
 metadata:
-  name: percona-server-mongodb-operator
+  name: percona-server-mongodb
 spec:
   componentTypes:
     backup:
@@ -50,9 +50,7 @@ spec:
       components:
         backupAgent:
           optional: true
-        engine:
-          defaults:
-            replicas: 3
+        engine: {}
         monitoring:
           optional: true
     sharded:
@@ -60,9 +58,7 @@ spec:
         backupAgent:
           optional: true
         configServer: {}
-        engine:
-          defaults:
-            replicas: 3
+        engine: {}
         monitoring:
           optional: true
         proxy: {}
