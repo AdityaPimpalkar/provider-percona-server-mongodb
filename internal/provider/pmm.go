@@ -15,7 +15,6 @@
 package provider
 
 import (
-	psmdbv1 "github.com/percona/percona-server-mongodb-operator/pkg/apis/psmdb/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 
@@ -98,18 +97,13 @@ var (
 
 // getPMMResources returns the PMM resource requirements for the instance.
 //
-// The calculation depends on the cluster lifecycle state:
-//
-//  1. New instance (currentSpec is nil): calculate defaults from engine memory
-//     size, merged with any user-specified overrides from the monitoring component.
-//  2. Existing instance, engine size category changed: recalculate defaults from
-//     the new engine memory size, merged with any user overrides.
-//  3. Existing instance, PMM was already enabled: preserve current PMM resources,
-//     merged with any user overrides (allows resource tuning without resizing).
-//  4. Existing instance, PMM was not enabled before: same as new instance.
+// Default resources are calculated from the engine memory size tier (small,
+// medium, or large) and then merged with any user-specified overrides from the
+// monitoring component. User-provided values always take precedence over the
+// calculated defaults. Resources are never preserved from a previous monitoring
+// configuration; they are always freshly calculated on each reconciliation.
 func getPMMResources(
 	c *controller.Context,
-	currentSpec *psmdbv1.PerconaServerMongoDBSpec,
 ) corev1.ResourceRequirements {
 	monitoring := c.Instance().Spec.Components[common.ComponentMonitoring]
 
@@ -124,128 +118,48 @@ func getPMMResources(
 		engineMemoryLimits = engine.Resources.Limits[corev1.ResourceMemory]
 	}
 
-	defaultResources := calculatePMMResources(engineMemoryLimits)
+	var defaultResources corev1.ResourceRequirements
 
-	// New instance: no existing PSMDB to compare against.
-	if currentSpec == nil {
-		return mergeResources(requested, defaultResources)
+	switch {
+	case engineMemoryLimits.Cmp(memoryLargeSize) >= 0:
+		defaultResources = pmmResourcesLarge
+	case engineMemoryLimits.Cmp(memoryMediumSize) >= 0:
+		defaultResources = pmmResourcesMedium
+	default:
+		defaultResources = pmmResourcesSmall
 	}
 
-	// Find the primary replset to compare engine size categories.
-	var currentReplSet psmdbv1.ReplsetSpec
-	for _, replset := range currentSpec.Replsets {
-		if replset.Name == rsName(0) {
-			currentReplSet = *replset
-			break
-		}
-	}
-
-	// Engine size category changed: recalculate PMM resources for the new tier.
-	if !equalSize(engineMemoryLimits, *currentReplSet.Resources.Requests.Memory()) {
-		return mergeResources(requested, defaultResources)
-	}
-
-	// PMM was already enabled: preserve current resources, allowing user overrides.
-	if currentSpec.PMM.Enabled {
-		return mergeResources(requested, currentSpec.PMM.Resources)
-	}
-
-	// PMM is being enabled for the first time on an existing instance.
 	return mergeResources(requested, defaultResources)
 }
 
-// equalSize checks if two memory sizes fall into the same predefined size category.
-func equalSize(a, b resource.Quantity) bool {
-	switch {
-	case a.Cmp(memoryLargeSize) >= 0:
-		// a is large size -> b must be large size
-		return b.Cmp(memoryLargeSize) >= 0
-	case a.Cmp(memoryMediumSize) >= 0:
-		// a is medium size -> b must be medium size
-		return b.Cmp(memoryMediumSize) >= 0 && b.Cmp(memoryLargeSize) == -1
-	default:
-		// a is small size -> b must be small size (less than medium)
-		return b.Cmp(memoryMediumSize) == -1
-	}
-}
-
-// calculatePMMResources returns the resources for PMM based on memory size.
-func calculatePMMResources(m resource.Quantity) corev1.ResourceRequirements {
-	if m.Cmp(memoryLargeSize) >= 0 {
-		return pmmResourcesLarge
-	}
-
-	if m.Cmp(memoryMediumSize) >= 0 {
-		return pmmResourcesMedium
-	}
-
-	return pmmResourcesSmall
-}
-
-// mergeResources merges requested and calculated resources.
+// mergeResources merges requested and default resources.
 // If a resource is specified in both, the value from requested is used.
 // If a resource is only specified in one, that value is used.
-func mergeResources(requested, calculated corev1.ResourceRequirements) corev1.ResourceRequirements {
-	resources := corev1.ResourceRequirements{
-		Requests: corev1.ResourceList{},
-		Limits:   corev1.ResourceList{},
-	}
+func mergeResources(requested, defaultResources corev1.ResourceRequirements) corev1.ResourceRequirements {
+	resources := corev1.ResourceRequirements{}
 
-	// CPU Requests
-	if hasRequestsCPU(requested) {
-		resources.Requests[corev1.ResourceCPU] = *requested.Requests.Cpu()
-	} else if hasRequestsCPU(calculated) {
-		resources.Requests[corev1.ResourceCPU] = *calculated.Requests.Cpu()
-	}
-
-	// Memory Requests
-	if hasRequestsMemory(requested) {
-		resources.Requests[corev1.ResourceMemory] = *requested.Requests.Memory()
-	} else if hasRequestsMemory(calculated) {
-		resources.Requests[corev1.ResourceMemory] = *calculated.Requests.Memory()
-	}
-
-	// CPU Limits
-	if hasLimitsCPU(requested) {
-		resources.Limits[corev1.ResourceCPU] = *requested.Limits.Cpu()
-	} else if hasLimitsCPU(calculated) {
-		resources.Limits[corev1.ResourceCPU] = *calculated.Limits.Cpu()
-	}
-
-	// Memory Limits
-	if hasLimitsMemory(requested) {
-		resources.Limits[corev1.ResourceMemory] = *requested.Limits.Memory()
-	} else if hasLimitsMemory(calculated) {
-		resources.Limits[corev1.ResourceMemory] = *calculated.Limits.Memory()
-	}
+	resources.Requests = mergeResourceList(requested.Requests, defaultResources.Requests)
+	resources.Limits = mergeResourceList(requested.Limits, defaultResources.Limits)
 
 	return resources
 }
 
-// hasRequestsCPU checks if the given resources has non-zero CPU requests.
-func hasRequestsCPU(resources corev1.ResourceRequirements) bool {
-	return resources.Requests != nil &&
-		resources.Requests.Cpu() != nil &&
-		!resources.Requests.Cpu().IsZero()
-}
+// mergeResourceList merges two resource lists, preferring values from requested.
+// Returns nil if the merged result is empty.
+func mergeResourceList(requested, defaultResources corev1.ResourceList) corev1.ResourceList {
+	merged := corev1.ResourceList{}
 
-// hasRequestsMemory checks if the given resources has non-zero memory requests.
-func hasRequestsMemory(resources corev1.ResourceRequirements) bool {
-	return resources.Requests != nil &&
-		resources.Requests.Memory() != nil &&
-		!resources.Requests.Memory().IsZero()
-}
+	for _, name := range []corev1.ResourceName{corev1.ResourceCPU, corev1.ResourceMemory} {
+		if v, ok := requested[name]; ok && !v.IsZero() {
+			merged[name] = v
+		} else if v, ok := defaultResources[name]; ok && !v.IsZero() {
+			merged[name] = v
+		}
+	}
 
-// hasLimitsCPU checks if the given resources has non-zero CPU limits.
-func hasLimitsCPU(resources corev1.ResourceRequirements) bool {
-	return resources.Limits != nil &&
-		resources.Limits.Cpu() != nil &&
-		!resources.Limits.Cpu().IsZero()
-}
+	if len(merged) == 0 {
+		return nil
+	}
 
-// hasLimitsMemory checks if the given resources has non-zero memory limits.
-func hasLimitsMemory(resources corev1.ResourceRequirements) bool {
-	return resources.Limits != nil &&
-		resources.Limits.Memory() != nil &&
-		!resources.Limits.Memory().IsZero()
+	return merged
 }
