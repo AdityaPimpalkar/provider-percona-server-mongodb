@@ -117,9 +117,9 @@ leaderElection:
   # -- Enable leader election (recommended for HA deployments)
   enabled: true
 
-# -- Values for the psmdb-operator subchart.
+# -- Values for the operator subchart.
 # See https://github.com/percona/percona-helm-charts/tree/main/charts/psmdb-operator for all options.
-psmdb-operator:
+operator:
   replicaCount: 1
   rbac:
     create: true
