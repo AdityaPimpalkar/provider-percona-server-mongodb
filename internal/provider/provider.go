@@ -85,7 +85,7 @@ func defaultSpec() psmdbv1.PerconaServerMongoDBSpec {
 		},
 		VolumeExpansionEnabled: true,
 		// FIXME
-		CRVersion: "1.21.1",
+		CRVersion: "1.22.0",
 	}
 }
 
