@@ -16,7 +16,6 @@ package provider
 
 import (
 	"fmt"
-	"net"
 
 	psmdbv1 "github.com/percona/percona-server-mongodb-operator/pkg/apis/psmdb/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -209,15 +208,6 @@ func buildConnectionDetails(c *controller.Context, psmdb *psmdbv1.PerconaServerM
 	username := string(secret.Data[psmdbv1.EnvMongoDBDatabaseAdminUser])
 	password := string(secret.Data[psmdbv1.EnvMongoDBDatabaseAdminPassword])
 
-	// psmdb.Status.Host may or may not include a port depending on topology:
-	// - replicaset: host without port (e.g. "cluster-rs0.ns.svc.cluster.local")
-	// - sharded: mongos host with port (e.g. "cluster-mongos.ns.svc.cluster.local:27017")
-	hostForURI := host
-	if _, _, err := net.SplitHostPort(host); err != nil {
-		// No port in host string, add the default port
-		hostForURI = net.JoinHostPort(host, port)
-	}
-
 	return controller.ConnectionDetails{
 		Type:     "mongodb",
 		Provider: "percona-server-mongodb",
@@ -225,7 +215,7 @@ func buildConnectionDetails(c *controller.Context, psmdb *psmdbv1.PerconaServerM
 		Port:     port,
 		Username: username,
 		Password: password,
-		URI:      fmt.Sprintf("mongodb://%s:%s@%s/admin?ssl=false", username, password, hostForURI),
+		URI:      fmt.Sprintf("mongodb://%s:%s@%s/admin?ssl=false", username, password, host),
 	}, nil
 }
 
