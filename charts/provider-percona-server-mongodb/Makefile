@@ -29,5 +29,5 @@ release-dev: prepare-chart
 deps:
 	$(HELM) version
 	$(HELM) repo list > /dev/null 2>&1 || true
-	$(HELM) repo add percona https://percona.github.io/percona-helm-charts/ --force-update
+	$(HELM) repo add percona https://percona.github.io/percona-helm-charts/ || true
 	$(HELM) dependency update .
